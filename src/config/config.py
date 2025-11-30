@@ -91,13 +91,13 @@ TOTAL_KEYPOINTS = POSE_KEYPOINTS + FACE_KEYPOINTS + (HAND_KEYPOINTS * 2)
 # OPTIMIZED MODEL HYPERPARAMETERS FOR BETTER ACCURACY + FASTER TRAINING
 # ============================================================================
 # Transformer architecture - Increased capacity for better accuracy
-EMBED_DIM = 384  # Increased from 256
+EMBED_DIM = 512  # Increased from 256
 NUM_HEADS = 6  # Increased from 4 for better attention
 FF_DIM = 768  # Increased from 512
 DROPOUT_RATE = 0.4  # Increased from 0.3 for better regularization
 
 # Training parameters - Optimized for speed and accuracy
-BATCH_SIZE = 64  # Increased from 32 for faster training
+BATCH_SIZE = 32  # Increased from 32 for faster training
 EPOCHS = 100  # Reduced from 200 but with better callbacks
 LEARNING_RATE = 0.0005  # Slightly reduced for better convergence
 VALIDATION_SPLIT = 0.20  # Increased from 0.15 for better validation

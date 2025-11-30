@@ -1,5 +1,5 @@
 """
-Model evaluation script for testing saved models.
+Model evaluation script with detailed TP/FP/FN/TN metrics.
 Loads a trained model and evaluates it on test data.
 """
 
@@ -8,6 +8,7 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 from src.config import (
@@ -25,9 +26,263 @@ from src.models.transformer_model import load_trained_model
 from src.utils.data_utils import load_sequences, split_data
 
 
+def calculate_tp_fp_fn_tn(y_true, y_pred, num_classes):
+    """
+    Calculate TP, FP, FN, TN for each class.
+
+    Args:
+        y_true: True labels (1D array)
+        y_pred: Predicted labels (1D array)
+        num_classes: Number of classes
+
+    Returns:
+        Dictionary with metrics for each class
+    """
+    metrics = {}
+
+    for class_idx in range(num_classes):
+        # True Positives: Predicted as class AND actually is class
+        tp = np.sum((y_pred == class_idx) & (y_true == class_idx))
+
+        # False Positives: Predicted as class BUT actually is NOT class
+        fp = np.sum((y_pred == class_idx) & (y_true != class_idx))
+
+        # False Negatives: Predicted as NOT class BUT actually IS class
+        fn = np.sum((y_pred != class_idx) & (y_true == class_idx))
+
+        # True Negatives: Predicted as NOT class AND actually is NOT class
+        tn = np.sum((y_pred != class_idx) & (y_true != class_idx))
+
+        # Calculate additional metrics
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1_score = (
+            2 * (precision * recall) / (precision + recall)
+            if (precision + recall) > 0
+            else 0.0
+        )
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+
+        metrics[class_idx] = {
+            "tp": int(tp),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tn": int(tn),
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1_score,
+            "specificity": specificity,
+            "support": int(tp + fn),
+        }
+
+    return metrics
+
+
+def print_detailed_metrics(metrics, actions):
+    """
+    Print detailed metrics table with TP/FP/FN/TN.
+
+    Args:
+        metrics: Dictionary of metrics per class
+        actions: List of action names
+    """
+    print("\n" + "=" * 120)
+    print("DETAILED METRICS PER CLASS (TP/FP/FN/TN)")
+    print("=" * 120)
+
+    # Header
+    header = f"{'Class':<8} {'TP':>6} {'FP':>6} {'FN':>6} {'TN':>6} {'Precision':>10} {'Recall':>10} {'F1-Score':>10} {'Specificity':>12} {'Support':>8}"
+    print(header)
+    print("-" * 120)
+
+    # Print each class
+    for idx, action in enumerate(actions):
+        m = metrics[idx]
+        row = (
+            f"{action:<8} "
+            f"{m['tp']:>6} "
+            f"{m['fp']:>6} "
+            f"{m['fn']:>6} "
+            f"{m['tn']:>6} "
+            f"{m['precision']:>10.4f} "
+            f"{m['recall']:>10.4f} "
+            f"{m['f1_score']:>10.4f} "
+            f"{m['specificity']:>12.4f} "
+            f"{m['support']:>8}"
+        )
+        print(row)
+
+    print("=" * 120)
+
+    # Calculate overall metrics
+    total_tp = sum(m["tp"] for m in metrics.values())
+    total_fp = sum(m["fp"] for m in metrics.values())
+    total_fn = sum(m["fn"] for m in metrics.values())
+    total_tn = sum(m["tn"] for m in metrics.values())
+
+    print("\nOVERALL STATISTICS:")
+    print(f"  Total True Positives:  {total_tp}")
+    print(f"  Total False Positives: {total_fp}")
+    print(f"  Total False Negatives: {total_fn}")
+    print(f"  Total True Negatives:  {total_tn}")
+    print("=" * 120)
+
+
+def save_metrics_to_csv(metrics, actions, save_path):
+    """
+    Save detailed metrics to CSV file.
+
+    Args:
+        metrics: Dictionary of metrics per class
+        actions: List of action names
+        save_path: Path to save CSV
+    """
+    data = []
+    for idx, action in enumerate(actions):
+        m = metrics[idx]
+        data.append(
+            {
+                "Class": action,
+                "TP": m["tp"],
+                "FP": m["fp"],
+                "FN": m["fn"],
+                "TN": m["tn"],
+                "Precision": m["precision"],
+                "Recall": m["recall"],
+                "F1-Score": m["f1_score"],
+                "Specificity": m["specificity"],
+                "Support": m["support"],
+            }
+        )
+
+    df = pd.DataFrame(data)
+    df.to_csv(save_path, index=False)
+    print(f"✓ Detailed metrics saved to: {save_path}")
+
+
+def plot_tp_fp_fn_tn_chart(metrics, actions):
+    """
+    Create visualization of TP/FP/FN/TN for each class.
+
+    Args:
+        metrics: Dictionary of metrics per class
+        actions: List of action names
+    """
+    # Prepare data
+    tp_values = [metrics[i]["tp"] for i in range(len(actions))]
+    fp_values = [metrics[i]["fp"] for i in range(len(actions))]
+    fn_values = [metrics[i]["fn"] for i in range(len(actions))]
+    tn_values = [metrics[i]["tn"] for i in range(len(actions))]
+
+    # Create stacked bar chart
+    fig, ax = plt.subplots(figsize=(20, 10))
+
+    x = np.arange(len(actions))
+    width = 0.6
+
+    # Create bars
+    p1 = ax.bar(x, tp_values, width, label="True Positive (TP)", color="#2ecc71")
+    p2 = ax.bar(
+        x,
+        fp_values,
+        width,
+        bottom=tp_values,
+        label="False Positive (FP)",
+        color="#e74c3c",
+    )
+
+    # Add FN on top of FP
+    bottom_fn = [tp_values[i] + fp_values[i] for i in range(len(actions))]
+    p3 = ax.bar(
+        x,
+        fn_values,
+        width,
+        bottom=bottom_fn,
+        label="False Negative (FN)",
+        color="#f39c12",
+    )
+
+    ax.set_xlabel("Action Class", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Count", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "True Positive, False Positive, False Negative per Class",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(actions, rotation=45, ha="right")
+    ax.legend(fontsize=12)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    plt.tight_layout()
+
+    save_path = os.path.join(RESULTS_DIR, "tp_fp_fn_tn_chart.png")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    print(f"✓ TP/FP/FN/TN chart saved to: {save_path}")
+    plt.close()
+
+
+def plot_precision_recall_chart(metrics, actions):
+    """
+    Create precision and recall comparison chart.
+
+    Args:
+        metrics: Dictionary of metrics per class
+        actions: List of action names
+    """
+    precision_values = [metrics[i]["precision"] for i in range(len(actions))]
+    recall_values = [metrics[i]["recall"] for i in range(len(actions))]
+    f1_values = [metrics[i]["f1_score"] for i in range(len(actions))]
+
+    fig, ax = plt.subplots(figsize=(18, 8))
+
+    x = np.arange(len(actions))
+    width = 0.25
+
+    bars1 = ax.bar(
+        x - width,
+        precision_values,
+        width,
+        label="Precision",
+        color="#3498db",
+        alpha=0.8,
+    )
+    bars2 = ax.bar(x, recall_values, width, label="Recall", color="#e74c3c", alpha=0.8)
+    bars3 = ax.bar(
+        x + width, f1_values, width, label="F1-Score", color="#2ecc71", alpha=0.8
+    )
+
+    ax.set_xlabel("Action Class", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Score", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Precision, Recall, and F1-Score per Class",
+        fontsize=16,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.set_xticks(x)
+    ax.set_xticklabels(actions, rotation=45, ha="right")
+    ax.legend(fontsize=12)
+    ax.set_ylim(0, 1.1)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    # Add horizontal line at 0.9
+    ax.axhline(
+        y=0.9, color="green", linestyle="--", linewidth=2, alpha=0.5, label="90% Target"
+    )
+
+    plt.tight_layout()
+
+    save_path = os.path.join(RESULTS_DIR, "precision_recall_f1_chart.png")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    print(f"✓ Precision/Recall/F1 chart saved to: {save_path}")
+    plt.close()
+
+
 def evaluate_model_on_test_data(model_path=None, visualize=True):
     """
-    Evaluate a trained model on test data.
+    Evaluate a trained model on test data with detailed TP/FP/FN/TN metrics.
 
     Args:
         model_path: Path to saved model (default: from config)
@@ -39,7 +294,7 @@ def evaluate_model_on_test_data(model_path=None, visualize=True):
     model_path = model_path or MODEL_PATH
 
     print("\n" + "=" * 70)
-    print("MODEL EVALUATION")
+    print("MODEL EVALUATION WITH DETAILED METRICS")
     print("=" * 70)
 
     # Check if model exists
@@ -89,11 +344,17 @@ def evaluate_model_on_test_data(model_path=None, visualize=True):
     y_pred_labels = np.argmax(y_pred_probs, axis=1)
     y_true_labels = np.argmax(y_test, axis=1)
 
-    # Calculate metrics
+    # Calculate TP/FP/FN/TN metrics
     print("\n" + "=" * 70)
-    print("EVALUATION METRICS")
+    print("CALCULATING DETAILED METRICS")
     print("=" * 70)
 
+    metrics = calculate_tp_fp_fn_tn(y_true_labels, y_pred_labels, len(ACTIONS))
+
+    # Print detailed metrics
+    print_detailed_metrics(metrics, ACTIONS)
+
+    # Calculate overall accuracy
     accuracy = accuracy_score(y_true_labels, y_pred_labels)
     print(f"\n✓ Overall Accuracy: {accuracy * 100:.2f}%")
     print(
@@ -102,7 +363,7 @@ def evaluate_model_on_test_data(model_path=None, visualize=True):
 
     # Classification report
     print("\n" + "-" * 70)
-    print("CLASSIFICATION REPORT")
+    print("STANDARD CLASSIFICATION REPORT")
     print("-" * 70)
 
     report = classification_report(
@@ -110,18 +371,9 @@ def evaluate_model_on_test_data(model_path=None, visualize=True):
     )
     print(report)
 
-    # Per-class accuracy
-    print("\n" + "-" * 70)
-    print("PER-CLASS ACCURACY")
-    print("-" * 70)
-
-    class_accuracies = {}
-    for idx, action in enumerate(ACTIONS):
-        mask = y_true_labels == idx
-        if np.sum(mask) > 0:
-            class_acc = np.mean(y_pred_labels[mask] == y_true_labels[mask])
-            class_accuracies[action] = class_acc
-            print(f"  '{action}': {class_acc * 100:.2f}% ({np.sum(mask)} samples)")
+    # Save detailed metrics to CSV
+    csv_path = os.path.join(RESULTS_DIR, "detailed_metrics.csv")
+    save_metrics_to_csv(metrics, ACTIONS, csv_path)
 
     # Visualizations
     if visualize:
@@ -132,18 +384,21 @@ def evaluate_model_on_test_data(model_path=None, visualize=True):
         # Confusion matrix
         plot_confusion_matrix(y_true_labels, y_pred_labels, ACTIONS)
 
+        # TP/FP/FN/TN chart
+        plot_tp_fp_fn_tn_chart(metrics, ACTIONS)
+
+        # Precision/Recall/F1 chart
+        plot_precision_recall_chart(metrics, ACTIONS)
+
         # Prediction confidence distribution
         plot_confidence_distribution(y_pred_probs, y_pred_labels, y_true_labels)
-
-        # Per-class accuracy bar chart
-        plot_class_accuracies(class_accuracies)
 
     # Summary
     results = {
         "accuracy": accuracy,
         "total_samples": len(y_test),
         "correct_predictions": np.sum(y_pred_labels == y_true_labels),
-        "class_accuracies": class_accuracies,
+        "metrics": metrics,
         "y_true": y_true_labels,
         "y_pred": y_pred_labels,
         "y_pred_probs": y_pred_probs,
@@ -249,100 +504,10 @@ def plot_confidence_distribution(y_pred_probs, y_pred, y_true):
     plt.close()
 
 
-def plot_class_accuracies(class_accuracies):
-    """Plot per-class accuracy as bar chart."""
-    actions = list(class_accuracies.keys())
-    accuracies = [class_accuracies[action] * 100 for action in actions]
-
-    plt.figure(figsize=(16, 8))
-    colors = [
-        "green" if acc >= 80 else "orange" if acc >= 60 else "red" for acc in accuracies
-    ]
-
-    bars = plt.bar(actions, accuracies, color=colors, edgecolor="black", linewidth=1.2)
-
-    plt.xlabel("Sign Language Action", fontsize=14, fontweight="bold")
-    plt.ylabel("Accuracy (%)", fontsize=14, fontweight="bold")
-    plt.title("Per-Class Accuracy", fontsize=16, fontweight="bold", pad=20)
-    plt.xticks(rotation=45, ha="right")
-    plt.ylim(0, 105)
-    plt.grid(True, alpha=0.3, axis="y")
-
-    # Add value labels on bars
-    for bar, acc in zip(bars, accuracies):
-        height = bar.get_height()
-        plt.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            height + 1,
-            f"{acc:.1f}%",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            fontweight="bold",
-        )
-
-    # Add horizontal line at 90% accuracy
-    plt.axhline(
-        y=90, color="blue", linestyle="--", linewidth=2, alpha=0.5, label="90% Target"
-    )
-    plt.legend(fontsize=10)
-
-    plt.tight_layout()
-
-    save_path = os.path.join(RESULTS_DIR, "class_accuracies.png")
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    print(f"✓ Class accuracies chart saved to: {save_path}")
-    plt.close()
-
-
-def compare_models(model_paths, model_names):
-    """
-    Compare multiple trained models.
-
-    Args:
-        model_paths: List of paths to saved models
-        model_names: List of names for each model
-
-    Returns:
-        Dictionary with comparison results
-    """
-    print("\n" + "=" * 70)
-    print("MODEL COMPARISON")
-    print("=" * 70)
-
-    results = {}
-
-    for model_path, model_name in zip(model_paths, model_names):
-        print(f"\nEvaluating: {model_name}")
-        print("-" * 70)
-
-        result = evaluate_model_on_test_data(model_path, visualize=False)
-
-        if result is not None:
-            results[model_name] = result
-            print(f"✓ {model_name}: {result['accuracy'] * 100:.2f}% accuracy")
-
-    # Compare results
-    if len(results) > 1:
-        print("\n" + "=" * 70)
-        print("COMPARISON SUMMARY")
-        print("=" * 70)
-
-        for name, result in results.items():
-            print(f"{name}: {result['accuracy'] * 100:.2f}%")
-
-        best_model = max(results.items(), key=lambda x: x[1]["accuracy"])
-        print(
-            f"\n✓ Best Model: {best_model[0]} with {best_model[1]['accuracy'] * 100:.2f}% accuracy"
-        )
-
-    return results
-
-
 def main():
     """Main entry point for evaluation script."""
     print("\n" + "🔍 " * 35)
-    print("SIGN LANGUAGE MODEL EVALUATION")
+    print("SIGN LANGUAGE MODEL EVALUATION WITH TP/FP/FN/TN")
     print("🔍 " * 35 + "\n")
 
     # Check for model
@@ -369,6 +534,7 @@ def main():
             print("✅ " * 35)
             print(f"\n📊 Final Accuracy: {results['accuracy'] * 100:.2f}%")
             print(f"📁 Results saved to: {RESULTS_DIR}")
+            print(f"📄 Detailed metrics CSV: {RESULTS_DIR}/detailed_metrics.csv")
         else:
             print("\n⚠ Evaluation failed.")
 
