@@ -9,34 +9,67 @@ import os
 # PROJECT PATHS
 # ============================================================================
 # Get the project root directory (assumes config.py is in src/config/)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
 # Data paths
-DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
-RAW_DATA_DIR = os.path.join(DATA_DIR, 'raw', 'Indian')
-PROCESSED_DATA_DIR = os.path.join(DATA_DIR, 'processed')
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+RAW_DATA_DIR = os.path.join(DATA_DIR, "raw", "Indian")
+PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
 
 # Model paths
-SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, 'saved_models')
-MODEL_PATH = os.path.join(SAVED_MODELS_DIR, 'action_transformer.h5')
+SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
+MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "action_transformer.h5")
 
 # Logs and results
-LOGS_DIR = os.path.join(PROJECT_ROOT, 'logs')
-RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
+LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
+RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 
 # ============================================================================
 # DATASET CONFIGURATION
 # ============================================================================
 # All sign language actions (A-Z, 1-9)
 ACTIONS = [
-    '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-    'U', 'V', 'W', 'X', 'Y', 'Z'
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "O",
+    "P",
+    "Q",
+    "R",
+    "S",
+    "T",
+    "U",
+    "V",
+    "W",
+    "X",
+    "Y",
+    "Z",
 ]
 
-# Number of sequences per action
-NO_SEQUENCES = 40
+# UPDATED: Number of sequences per action - changed from 40 to 20
+NO_SEQUENCES = 20
 
 # Number of frames per sequence
 SEQUENCE_LENGTH = 20
@@ -51,27 +84,27 @@ MIN_TRACKING_CONFIDENCE = 0.5
 # Keypoint dimensions
 POSE_KEYPOINTS = 33 * 4  # 33 landmarks with x, y, z, visibility
 FACE_KEYPOINTS = 468 * 3  # 468 landmarks with x, y, z
-HAND_KEYPOINTS = 21 * 3   # 21 landmarks with x, y, z per hand
+HAND_KEYPOINTS = 21 * 3  # 21 landmarks with x, y, z per hand
 TOTAL_KEYPOINTS = POSE_KEYPOINTS + FACE_KEYPOINTS + (HAND_KEYPOINTS * 2)
 
 # ============================================================================
-# MODEL HYPERPARAMETERS
+# OPTIMIZED MODEL HYPERPARAMETERS FOR BETTER ACCURACY + FASTER TRAINING
 # ============================================================================
-# Transformer architecture
-EMBED_DIM = 256
-NUM_HEADS = 4
-FF_DIM = 512
-DROPOUT_RATE = 0.3
+# Transformer architecture - Increased capacity for better accuracy
+EMBED_DIM = 384  # Increased from 256
+NUM_HEADS = 6  # Increased from 4 for better attention
+FF_DIM = 768  # Increased from 512
+DROPOUT_RATE = 0.4  # Increased from 0.3 for better regularization
 
-# Training parameters
-BATCH_SIZE = 32
-EPOCHS = 200
-LEARNING_RATE = 0.001
-VALIDATION_SPLIT = 0.15
+# Training parameters - Optimized for speed and accuracy
+BATCH_SIZE = 64  # Increased from 32 for faster training
+EPOCHS = 100  # Reduced from 200 but with better callbacks
+LEARNING_RATE = 0.0005  # Slightly reduced for better convergence
+VALIDATION_SPLIT = 0.20  # Increased from 0.15 for better validation
 RANDOM_STATE = 42
 
 # Prediction threshold
-PREDICTION_THRESHOLD = 0.6
+PREDICTION_THRESHOLD = 0.7  # Increased from 0.6 for higher confidence
 
 # ============================================================================
 # VISUALIZATION SETTINGS
@@ -91,6 +124,7 @@ LANDMARK_THICKNESS = 2
 LANDMARK_RADIUS = 4
 CONNECTION_THICKNESS = 2
 
+
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -102,22 +136,22 @@ def create_directories():
         PROCESSED_DATA_DIR,
         SAVED_MODELS_DIR,
         LOGS_DIR,
-        RESULTS_DIR
+        RESULTS_DIR,
     ]
-    
+
     for directory in directories:
         os.makedirs(directory, exist_ok=True)
-    
+
     # Create action folders in processed data directory
     for action in ACTIONS:
         action_dir = os.path.join(PROCESSED_DATA_DIR, action)
         os.makedirs(action_dir, exist_ok=True)
-        
+
         # Create sequence folders
         for sequence in range(NO_SEQUENCES):
             sequence_dir = os.path.join(action_dir, str(sequence))
             os.makedirs(sequence_dir, exist_ok=True)
-    
+
     print(f"✓ All directories created successfully")
     print(f"  - Raw data: {RAW_DATA_DIR}")
     print(f"  - Processed data: {PROCESSED_DATA_DIR}")
