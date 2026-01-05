@@ -1,6 +1,7 @@
 """
 Configuration file for Sign Language Detection project.
 All paths, hyperparameters, and constants are defined here.
+UPDATED: For Hands-Only detection
 """
 
 import os
@@ -8,7 +9,6 @@ import os
 # ============================================================================
 # PROJECT PATHS
 # ============================================================================
-# Get the project root directory (assumes config.py is in src/config/)
 PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
@@ -29,7 +29,6 @@ RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 # ============================================================================
 # DATASET CONFIGURATION
 # ============================================================================
-# All sign language actions (A-Z, 1-9)
 ACTIONS = [
     "1",
     "2",
@@ -68,7 +67,7 @@ ACTIONS = [
     "Z",
 ]
 
-# UPDATED: Number of sequences per action - changed from 40 to 20
+# Number of sequences per action
 NO_SEQUENCES = 20
 
 # Number of frames per sequence
@@ -81,30 +80,32 @@ SEQUENCE_LENGTH = 20
 MIN_DETECTION_CONFIDENCE = 0.5
 MIN_TRACKING_CONFIDENCE = 0.5
 
-# Keypoint dimensions
-POSE_KEYPOINTS = 33 * 4  # 33 landmarks with x, y, z, visibility
-FACE_KEYPOINTS = 468 * 3  # 468 landmarks with x, y, z
-HAND_KEYPOINTS = 21 * 3  # 21 landmarks with x, y, z per hand
-TOTAL_KEYPOINTS = POSE_KEYPOINTS + FACE_KEYPOINTS + (HAND_KEYPOINTS * 2)
+# Keypoint dimensions - HANDS ONLY VERSION
+# We keep the same total dimension (1662) but only hands will have actual values
+# This maintains compatibility with existing code structure
+POSE_KEYPOINTS = 33 * 4  # 132 (will be zeros)
+FACE_KEYPOINTS = 468 * 3  # 1404 (will be zeros)
+HAND_KEYPOINTS = 21 * 3  # 63 (actual hand data)
+TOTAL_KEYPOINTS = POSE_KEYPOINTS + FACE_KEYPOINTS + (HAND_KEYPOINTS * 2)  # Still 1662
 
 # ============================================================================
-# OPTIMIZED MODEL HYPERPARAMETERS FOR BETTER ACCURACY + FASTER TRAINING
+# OPTIMIZED MODEL HYPERPARAMETERS FOR HANDS-ONLY DETECTION
 # ============================================================================
-# Transformer architecture - Increased capacity for better accuracy
-EMBED_DIM = 512  # Increased from 256
-NUM_HEADS = 6  # Increased from 4 for better attention
-FF_DIM = 768  # Increased from 512
-DROPOUT_RATE = 0.4  # Increased from 0.3 for better regularization
+# Transformer architecture - Optimized for hand gestures
+EMBED_DIM = 256  # Reduced from 512 (hands-only needs less capacity)
+NUM_HEADS = 4  # Reduced from 6
+FF_DIM = 512  # Reduced from 768
+DROPOUT_RATE = 0.3  # Reduced from 0.4 (less risk of overfitting with simpler data)
 
-# Training parameters - Optimized for speed and accuracy
-BATCH_SIZE = 64  # Increased from 32 for faster training
-EPOCHS = 100  # Reduced from 200 but with better callbacks
-LEARNING_RATE = 0.0005  # Slightly reduced for better convergence
-VALIDATION_SPLIT = 0.20  # Increased from 0.15 for better validation
+# Training parameters
+BATCH_SIZE = 64
+EPOCHS = 100
+LEARNING_RATE = 0.001  # Slightly increased for faster convergence
+VALIDATION_SPLIT = 0.20
 RANDOM_STATE = 42
 
 # Prediction threshold
-PREDICTION_THRESHOLD = 0.7  # Increased from 0.6 for higher confidence
+PREDICTION_THRESHOLD = 0.7
 
 # ============================================================================
 # VISUALIZATION SETTINGS
@@ -176,3 +177,4 @@ if __name__ == "__main__":
     create_directories()
     print(f"\nTotal actions: {get_num_classes()}")
     print(f"Actions: {ACTIONS}")
+    print(f"\n⚠️  NOTE: This config is optimized for HANDS-ONLY detection")

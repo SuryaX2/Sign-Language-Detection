@@ -58,6 +58,7 @@ notebooks/.ipynb_checkpoints/
 data/raw/**/*
 !data/raw/.gitkeep
 data/processed/**/*
+data/processed_holistic_backup/**/*
 !data/processed/.gitkeep
 
 # Trained Models (large files)
