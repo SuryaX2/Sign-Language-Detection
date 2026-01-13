@@ -1,7 +1,10 @@
-tensorflow
-mediapipe
-scikit-learn
-opencv-python
-numpy
-matplotlib
-seaborn
+tensorflow>=2.10.0,<3.0.0
+mediapipe>=0.10.0
+opencv-python>=4.8.0
+numpy>=1.23.0,<2.0.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+flask>=2.3.0
+flask-cors>=4.0.0
+pillow>=10.0.0
