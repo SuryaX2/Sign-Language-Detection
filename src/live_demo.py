@@ -1,12 +1,11 @@
 """
-Live demo script for real-time sign language detection using webcam.
-Uses MediaPipe Hands for hand tracking and trained transformer model for prediction.
+Production-grade live sign language detection with robust prediction logic.
 """
 
 import cv2
 import numpy as np
 import time
-from collections import deque
+from collections import deque, Counter
 
 from src.config import (
     MODEL_PATH,
@@ -27,341 +26,437 @@ from src.utils.mediapipe_utils import (
 
 
 class SignLanguageDetector:
-    """Real-time sign language detection from webcam."""
+    """Production-grade real-time sign language detector with stability logic."""
 
-    def __init__(self, model_path, actions, sequence_length=20, threshold=0.6):
-        """
-        Initialize the detector.
-
-        Args:
-            model_path: Path to trained model
-            actions: List of action labels
-            sequence_length: Number of frames per sequence
-            threshold: Confidence threshold for predictions
-        """
+    def __init__(self, model_path, actions, sequence_length=20, threshold=0.7):
         self.model_path = model_path
         self.actions = np.array(actions)
         self.sequence_length = sequence_length
         self.threshold = threshold
 
-        # Load model
-        print("Loading trained model...")
+        # Enhanced thresholds
+        self.confidence_threshold = 0.90
+        self.stability_window = 15
+        self.min_stable_frames = 14
+        self.no_gesture_threshold = 0.60
+        self.cooldown_frames = 15
+
+        print("Loading model...")
         self.model = load_trained_model(model_path)
-        print("✓ Model loaded successfully!")
+        print("✓ Model loaded")
 
-        # Initialize tracking variables
+        # Tracking
         self.sequence = deque(maxlen=sequence_length)
-        self.sentence = deque(maxlen=5)  # Store last 5 predictions
-        self.predictions = deque(maxlen=10)  # Store last 10 prediction indices
+        self.sentence = deque(maxlen=5)
+        self.predictions_buffer = deque(maxlen=self.stability_window)
+        self.confidence_buffer = deque(maxlen=self.stability_window)
 
-        # Performance tracking
+        # State management
+        self.current_prediction = None
+        self.current_confidence = 0.0
+        self.frames_since_last_append = 0
+        self.stable_prediction = None
+        self.stable_count = 0
+
+        # Performance
         self.fps = 0
         self.frame_count = 0
         self.start_time = time.time()
 
     def reset(self):
-        """Reset all tracking variables."""
         self.sequence.clear()
         self.sentence.clear()
-        self.predictions.clear()
+        self.predictions_buffer.clear()
+        self.confidence_buffer.clear()
+        self.current_prediction = None
+        self.current_confidence = 0.0
+        self.frames_since_last_append = 0
+        self.stable_prediction = None
+        self.stable_count = 0
         self.frame_count = 0
         self.start_time = time.time()
 
     def update_fps(self):
-        """Update FPS calculation."""
         self.frame_count += 1
         elapsed = time.time() - self.start_time
-        if elapsed > 1.0:  # Update every second
+        if elapsed > 1.0:
             self.fps = self.frame_count / elapsed
             self.frame_count = 0
             self.start_time = time.time()
 
+    def is_no_gesture(self, keypoints):
+        """Detect if no meaningful gesture is present."""
+        hand_keypoints = keypoints[-126:]
+        non_zero = np.count_nonzero(hand_keypoints)
+        total = len(hand_keypoints)
+        ratio = non_zero / total
+        return ratio < 0.1
+
     def process_frame(self, keypoints):
         """
-        Process a single frame and make prediction.
-
-        Args:
-            keypoints: Extracted keypoints from current frame
+        Process frame with robust prediction logic.
 
         Returns:
-            Tuple of (predicted_action, confidence, is_new_prediction)
+            (predicted_action, confidence, stability, is_new_letter)
         """
-        # Add keypoints to sequence
+        self.frames_since_last_append += 1
+
+        # Check for no gesture
+        if self.is_no_gesture(keypoints):
+            self.sequence.clear()
+            self.predictions_buffer.clear()
+            self.confidence_buffer.clear()
+            self.stable_prediction = None
+            self.stable_count = 0
+            return None, 0.0, 0.0, False
+
+        # Add to sequence
         self.sequence.append(keypoints)
 
-        # Need full sequence to make prediction
+        # Need full sequence
         if len(self.sequence) < self.sequence_length:
-            return None, 0.0, False
+            return None, 0.0, 0.0, False
 
         # Make prediction
-        sequence_array = np.array(list(self.sequence))
-        res = self.model.predict(np.expand_dims(sequence_array, axis=0), verbose=0)[0]
+        seq_array = np.array(list(self.sequence))
+        probs = self.model.predict(np.expand_dims(seq_array, axis=0), verbose=0)[0]
 
-        prediction_index = np.argmax(res)
-        predicted_action = self.actions[prediction_index]
-        confidence = res[prediction_index]
+        pred_idx = np.argmax(probs)
+        pred_action = self.actions[pred_idx]
+        pred_conf = probs[pred_idx]
 
-        # Track predictions
-        self.predictions.append(prediction_index)
+        # Calculate entropy (uncertainty measure)
+        entropy = -np.sum(probs * np.log(probs + 1e-10))
+        max_entropy = -np.log(1.0 / len(self.actions))
+        normalized_entropy = entropy / max_entropy
 
-        # Only add to sentence if:
-        # 1. Confidence is above threshold
-        # 2. Last 10 predictions are consistent
-        # 3. Different from last prediction in sentence
-        is_new_prediction = False
+        # Reject if too uncertain (high entropy)
+        if normalized_entropy > 0.7:
+            return pred_action, pred_conf, 0.0, False
 
-        if len(self.predictions) >= 10:
-            # Check if last 10 predictions are mostly the same
-            unique, counts = np.unique(list(self.predictions), return_counts=True)
-            most_common_idx = unique[np.argmax(counts)]
+        # Update buffers
+        self.predictions_buffer.append(pred_idx)
+        self.confidence_buffer.append(pred_conf)
 
-            if most_common_idx == prediction_index and confidence > self.threshold:
-                if len(self.sentence) == 0 or predicted_action != self.sentence[-1]:
-                    self.sentence.append(predicted_action)
-                    is_new_prediction = True
+        self.current_prediction = pred_action
+        self.current_confidence = pred_conf
 
-        return predicted_action, confidence, is_new_prediction
+        # Calculate stability
+        if len(self.predictions_buffer) >= self.stability_window:
+            counter = Counter(self.predictions_buffer)
+            most_common_idx, most_common_count = counter.most_common(1)[0]
+            stability = most_common_count / self.stability_window
 
-    def draw_ui(self, image, predicted_action, confidence):
-        """
-        Draw user interface on image.
+            avg_confidence = np.mean(list(self.confidence_buffer))
 
-        Args:
-            image: Image to draw on
-            predicted_action: Current predicted action
-            confidence: Prediction confidence
-        """
+            # Check if prediction is stable
+            if (
+                most_common_idx == pred_idx
+                and stability >= (self.min_stable_frames / self.stability_window)
+                and avg_confidence >= self.confidence_threshold
+                and self.frames_since_last_append >= self.cooldown_frames
+            ):
+
+                stable_action = self.actions[most_common_idx]
+
+                # Append if different from last
+                if len(self.sentence) == 0 or stable_action != self.sentence[-1]:
+                    self.sentence.append(stable_action)
+                    self.frames_since_last_append = 0
+                    self.predictions_buffer.clear()
+                    self.confidence_buffer.clear()
+                    print(
+                        f"✓ Added: '{stable_action}' (conf: {avg_confidence:.2f}, stability: {stability:.2f})"
+                    )
+                    return stable_action, avg_confidence, stability, True
+
+            return pred_action, pred_conf, stability, False
+
+        return pred_action, pred_conf, 0.0, False
+
+    def draw_ui(self, image, pred_action, confidence, stability):
+        """Draw modern UI with prediction stages."""
         h, w, _ = image.shape
 
-        # Draw top bar with sentence
-        cv2.rectangle(image, (0, 0), (w, 60), (245, 117, 16), -1)
-
-        # Display sentence
-        sentence_text = (
-            " ".join(list(self.sentence))
-            if len(self.sentence) > 0
-            else "Waiting for sign..."
-        )
+        # Top bar - sentence
+        cv2.rectangle(image, (0, 0), (w, 70), (40, 40, 40), -1)
+        sentence_text = " ".join(list(self.sentence)) if self.sentence else "Waiting..."
         cv2.putText(
             image,
             sentence_text,
-            (10, 40),
+            (15, 45),
             cv2.FONT_HERSHEY_SIMPLEX,
-            1.2,
+            1.3,
             (255, 255, 255),
             3,
-            cv2.LINE_AA,
         )
 
-        # Draw bottom bar with current prediction
-        cv2.rectangle(image, (0, h - 80), (w, h), (50, 50, 50), -1)
+        # Status indicator
+        status_x = w - 100
+        if pred_action:
+            color = (0, 255, 0) if stability > 0.7 else (0, 165, 255)
+            cv2.circle(image, (status_x, 35), 15, color, -1)
 
-        if predicted_action is not None:
-            # Prediction text
-            pred_text = f"Detecting: {predicted_action}"
+        # Bottom panel - current prediction
+        panel_height = 140
+        cv2.rectangle(image, (0, h - panel_height), (w, h), (30, 30, 30), -1)
+
+        if pred_action:
+            # Current letter being detected
             cv2.putText(
                 image,
-                pred_text,
-                (10, h - 45),
+                "Detecting:",
+                (15, h - 100),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (255, 255, 255),
+                0.7,
+                (180, 180, 180),
                 2,
-                cv2.LINE_AA,
+            )
+
+            letter_color = (
+                (0, 255, 0)
+                if confidence >= self.confidence_threshold
+                else (100, 200, 255)
+            )
+            cv2.putText(
+                image,
+                pred_action,
+                (15, h - 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.8,
+                letter_color,
+                4,
             )
 
             # Confidence bar
-            bar_width = int((w - 20) * confidence)
-            bar_color = (0, 255, 0) if confidence > self.threshold else (0, 165, 255)
-            cv2.rectangle(image, (10, h - 25), (10 + bar_width, h - 10), bar_color, -1)
-            cv2.rectangle(image, (10, h - 25), (w - 10, h - 10), (100, 100, 100), 2)
+            bar_x = 150
+            bar_width = 300
+            bar_y = h - 85
 
-            # Confidence percentage
-            conf_text = f"{confidence * 100:.1f}%"
-            cv2.putText(
-                image,
-                conf_text,
-                (w - 100, h - 45),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                2,
-                cv2.LINE_AA,
+            cv2.rectangle(
+                image, (bar_x, bar_y), (bar_x + bar_width, bar_y + 15), (60, 60, 60), -1
             )
 
-        # Draw FPS counter
-        fps_text = f"FPS: {self.fps:.1f}"
-        cv2.putText(
-            image,
-            fps_text,
-            (w - 120, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-            cv2.LINE_AA,
-        )
+            filled_width = int(bar_width * confidence)
+            if confidence >= self.confidence_threshold:
+                bar_color = (0, 255, 0)
+            elif confidence >= 0.7:
+                bar_color = (0, 200, 255)
+            else:
+                bar_color = (100, 100, 100)
 
-        # Draw instructions
-        instructions = [
-            "Press 'q' to quit",
-            "Press 'r' to reset",
-            "Press 's' to save sentence",
-        ]
-        y_offset = 100
-        for instruction in instructions:
+            cv2.rectangle(
+                image, (bar_x, bar_y), (bar_x + filled_width, bar_y + 15), bar_color, -1
+            )
+
             cv2.putText(
                 image,
-                instruction,
-                (10, y_offset),
+                f"{confidence*100:.0f}%",
+                (bar_x + bar_width + 10, bar_y + 12),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (255, 255, 255),
                 1,
-                cv2.LINE_AA,
             )
-            y_offset += 25
+
+            # Stability bar
+            if len(self.predictions_buffer) >= 5:
+                bar_y2 = h - 55
+                cv2.rectangle(
+                    image,
+                    (bar_x, bar_y2),
+                    (bar_x + bar_width, bar_y2 + 15),
+                    (60, 60, 60),
+                    -1,
+                )
+
+                stability_filled = int(bar_width * stability)
+                stability_color = (0, 255, 0) if stability > 0.7 else (150, 150, 0)
+                cv2.rectangle(
+                    image,
+                    (bar_x, bar_y2),
+                    (bar_x + stability_filled, bar_y2 + 15),
+                    stability_color,
+                    -1,
+                )
+
+                cv2.putText(
+                    image,
+                    f"Stable: {stability*100:.0f}%",
+                    (bar_x + bar_width + 10, bar_y2 + 12),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
+
+            # Cooldown indicator
+            if self.frames_since_last_append < self.cooldown_frames:
+                cooldown_ratio = self.frames_since_last_append / self.cooldown_frames
+                cooldown_text = f"Cooldown: {int((1-cooldown_ratio)*100)}%"
+                cv2.putText(
+                    image,
+                    cooldown_text,
+                    (15, h - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (100, 100, 255),
+                    1,
+                )
+        else:
+            cv2.putText(
+                image,
+                "No sign detected",
+                (15, h - 70),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,
+                (150, 150, 150),
+                2,
+            )
+
+        # FPS
+        cv2.putText(
+            image,
+            f"FPS: {self.fps:.0f}",
+            (w - 100, h - 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 255),
+            2,
+        )
+
+        # Instructions
+        instructions = ["Q: Quit | R: Reset | S: Save | SPACE: Add Space"]
+        cv2.putText(
+            image,
+            instructions[0],
+            (15, h - panel_height - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (200, 200, 200),
+            1,
+        )
+
+    def add_space(self):
+        """Add space to sentence."""
+        if len(self.sentence) > 0:
+            self.sentence.append(" ")
+            print("✓ Space added")
 
     def save_sentence(self):
-        """Save current sentence to file."""
+        """Save sentence to file."""
         if len(self.sentence) == 0:
-            print("⚠ No sentence to save!")
+            print("⚠ No sentence to save")
             return
 
-        sentence_text = " ".join(list(self.sentence))
+        sentence_text = "".join(list(self.sentence))
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         filename = f"sentence_{timestamp}.txt"
 
         with open(filename, "w") as f:
             f.write(sentence_text)
 
-        print(f"✓ Sentence saved to: {filename}")
-        print(f"  Content: {sentence_text}")
+        print(f"✓ Saved: {filename}")
+        print(f"  '{sentence_text}'")
 
     def run(self):
-        """Run the live detection demo."""
+        """Run live detection."""
         print("\n" + "=" * 70)
-        print("STARTING LIVE SIGN LANGUAGE DETECTION")
+        print("LIVE SIGN LANGUAGE DETECTION")
         print("=" * 70)
-        print("Instructions:")
-        print("  - Show hand signs to the camera")
-        print("  - Press 'q' to quit")
-        print("  - Press 'r' to reset detected sentence")
-        print("  - Press 's' to save current sentence")
+        print("Controls:")
+        print("  Q - Quit")
+        print("  R - Reset sentence")
+        print("  S - Save sentence")
+        print("  SPACE - Add space")
         print("=" * 70 + "\n")
 
-        # Open webcam
         cap = cv2.VideoCapture(0)
 
         if not cap.isOpened():
-            print("✗ Error: Could not open webcam!")
+            print("✗ Cannot open webcam")
             return
 
-        # Set camera properties
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, 30)
 
-        print("✓ Webcam opened successfully!")
-        print("✓ Starting detection...\n")
+        print("✓ Camera ready\n")
 
-        # Initialize MediaPipe Hands
         with HandsDetector(
             max_num_hands=2,
             min_detection_confidence=MIN_DETECTION_CONFIDENCE,
             min_tracking_confidence=MIN_TRACKING_CONFIDENCE,
         ) as hands:
 
-            predicted_action = None
+            pred_action = None
             confidence = 0.0
+            stability = 0.0
 
             while cap.isOpened():
                 ret, frame = cap.read()
-
                 if not ret:
-                    print("✗ Failed to grab frame")
                     break
 
-                # Flip frame horizontally for mirror effect
                 frame = cv2.flip(frame, 1)
-
-                # Make detections
                 image, results = mediapipe_detection(frame, hands)
-
-                # Draw hand landmarks
                 draw_hand_landmarks(image, results)
 
-                # Extract keypoints
                 keypoints = extract_keypoints_hands_normalized(results)
+                pred_action, confidence, stability, is_new = self.process_frame(
+                    keypoints
+                )
 
-                # Process frame and get prediction
-                predicted_action, confidence, is_new = self.process_frame(keypoints)
-
-                if is_new:
-                    print(
-                        f"✓ New sign detected: '{predicted_action}' (Confidence: {confidence * 100:.1f}%)"
-                    )
-
-                # Update FPS
                 self.update_fps()
+                self.draw_ui(image, pred_action, confidence, stability)
 
-                # Draw UI
-                self.draw_ui(image, predicted_action, confidence)
-
-                # Display frame
                 cv2.imshow("Sign Language Detection", image)
 
-                # Handle key presses
                 key = cv2.waitKey(1) & 0xFF
 
                 if key == ord("q"):
-                    print("\n✓ Quitting...")
+                    print("\n✓ Exiting...")
                     break
                 elif key == ord("r"):
-                    print("\n✓ Resetting sentence...")
+                    print("\n✓ Reset")
                     self.reset()
                 elif key == ord("s"):
-                    print("\n✓ Saving sentence...")
                     self.save_sentence()
+                elif key == ord(" "):
+                    self.add_space()
 
-        # Cleanup
         cap.release()
         cv2.destroyAllWindows()
 
         print("\n" + "=" * 70)
-        print("DEMO ENDED")
-        print("=" * 70)
-
+        print("SESSION ENDED")
         if len(self.sentence) > 0:
-            final_sentence = " ".join(list(self.sentence))
-            print(f"Final sentence: {final_sentence}")
+            print(f"Final: {''.join(list(self.sentence))}")
+        print("=" * 70)
 
 
 def main():
-    """Main entry point for live demo."""
-    print("\n" + "🎥 " * 35)
-    print("SIGN LANGUAGE LIVE DETECTION DEMO")
-    print("🎥 " * 35 + "\n")
-
-    # Check if model exists
     import os
 
+    print("\n" + "🎥 " * 35)
+    print("SIGN LANGUAGE LIVE DETECTION")
+    print("🎥 " * 35 + "\n")
+
     if not os.path.exists(MODEL_PATH):
-        print(f"✗ Trained model not found at: {MODEL_PATH}")
-        print("  Please train a model first: python -m src.train_model")
+        print(f"✗ Model not found: {MODEL_PATH}")
+        print("  Train model first: python -m src.train_model")
         return
 
-    print(f"Using model: {MODEL_PATH}")
-    print(f"Detection threshold: {PREDICTION_THRESHOLD * 100:.0f}%")
-    print(f"Sequence length: {SEQUENCE_LENGTH} frames")
+    print(f"Model: {MODEL_PATH}")
+    print(f"Confidence threshold: 85%")
+    print(f"Stability window: 15 frames")
+    print(f"Min stable frames: 12")
 
-    response = input("\nStart live detection? (y/n): ").lower().strip()
-
+    response = input("\nStart? (y/n): ").strip().lower()
     if response != "y":
-        print("Demo cancelled.")
+        print("Cancelled")
         return
 
-    # Run demo
     try:
         detector = SignLanguageDetector(
             model_path=MODEL_PATH,
@@ -369,15 +464,12 @@ def main():
             sequence_length=SEQUENCE_LENGTH,
             threshold=PREDICTION_THRESHOLD,
         )
-
         detector.run()
-
-        print("\n✅ Demo completed successfully!")
-
+        print("\n✅ Completed")
     except KeyboardInterrupt:
-        print("\n\n⚠ Demo interrupted by user!")
+        print("\n\n⚠ Interrupted")
     except Exception as e:
-        print(f"\n\n✗ Error during demo: {e}")
+        print(f"\n\n✗ Error: {e}")
         import traceback
 
         traceback.print_exc()
