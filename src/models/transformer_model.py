@@ -153,27 +153,24 @@ def create_transformer_model(
 
 
 def load_trained_model(model_path):
-    """
-    Load a pre-trained model with custom layers.
-
-    Args:
-        model_path: Path to saved model file (.h5 or .keras)
-
-    Returns:
-        Loaded Keras model
-    """
     from tensorflow.keras.models import load_model
+    from tensorflow.keras.utils import register_keras_serializable
 
-    # Define custom objects for loading
     custom_objects = {
         "PositionalEncoding": PositionalEncoding,
         "TransformerBlock": TransformerBlock,
     }
 
     print(f"Loading model from: {model_path}")
-    model = load_model(model_path, custom_objects=custom_objects)
-    print("✓ Model loaded successfully!")
 
+    # .keras format needs custom_objects passed differently
+    if model_path.endswith(".keras"):
+        with tf.keras.utils.custom_object_scope(custom_objects):
+            model = load_model(model_path)
+    else:
+        model = load_model(model_path, custom_objects=custom_objects)
+
+    print("✓ Model loaded successfully!")
     return model
 
 

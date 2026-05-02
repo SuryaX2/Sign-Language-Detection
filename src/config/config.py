@@ -1,34 +1,35 @@
 """
-Configuration file for Sign Language Detection project.
-All paths, hyperparameters, and constants are defined here.
-UPDATED: For Hands-Only detection
+Central configuration for Sign Language Detection.
+Extractor: hands-normalized (wrist-relative, position invariant).
 """
 
 import os
 
-# ============================================================================
-# PROJECT PATHS
-# ============================================================================
+# ---------------------------------------------------------------------------
+# EXTRACTOR CONTRACT — enforced at preprocessing, training, and inference
+# Changing this value without re-running preprocessing + retraining will break
+# the train/inference distribution match.
+# ---------------------------------------------------------------------------
+EXTRACTOR_MODE = "hands_normalized"  # only valid value in this project
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 
-# Data paths
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 RAW_DATA_DIR = os.path.join(DATA_DIR, "raw", "Indian")
 PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
-
-# Model paths
 SAVED_MODELS_DIR = os.path.join(PROJECT_ROOT, "saved_models")
-MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "action_transformer.h5")
-
-# Logs and results
+MODEL_PATH = os.path.join(SAVED_MODELS_DIR, "action_transformer.keras")
 LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
 
-# ============================================================================
-# DATASET CONFIGURATION
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
 ACTIONS = [
     "1",
     "2",
@@ -67,71 +68,57 @@ ACTIONS = [
     "Z",
 ]
 
-# Number of sequences per action
-NO_SEQUENCES = 20
+NO_SEQUENCES = 120
+SEQUENCE_LENGTH = 10
 
-# Number of frames per sequence
-SEQUENCE_LENGTH = 20
-
-# ============================================================================
-# MEDIAPIPE CONFIGURATION
-# ============================================================================
-# MediaPipe detection confidence thresholds
+# ---------------------------------------------------------------------------
+# MediaPipe — Hands detector only
+# ---------------------------------------------------------------------------
 MIN_DETECTION_CONFIDENCE = 0.5
 MIN_TRACKING_CONFIDENCE = 0.5
 
-# Keypoint dimensions - HANDS ONLY VERSION
-# We keep the same total dimension (1662) but only hands will have actual values
-# This maintains compatibility with existing code structure
-POSE_KEYPOINTS = 33 * 4  # 132 (will be zeros)
-FACE_KEYPOINTS = 468 * 3  # 1404 (will be zeros)
-HAND_KEYPOINTS = 21 * 3  # 63 (actual hand data)
-TOTAL_KEYPOINTS = POSE_KEYPOINTS + FACE_KEYPOINTS + (HAND_KEYPOINTS * 2)  # Still 1662
+# Feature dimensions
+# pose(132) and face(1404) are always zeros in hands_normalized mode.
+# They are kept to preserve model input shape compatibility.
+POSE_KEYPOINTS = 33 * 4  # 132  — zeros
+FACE_KEYPOINTS = 468 * 3  # 1404 — zeros
+HAND_KEYPOINTS = 21 * 3  # 63   — real data per hand
+HAND_ONLY_KEYPOINTS = HAND_KEYPOINTS * 2
+TOTAL_KEYPOINTS = POSE_KEYPOINTS + FACE_KEYPOINTS + (HAND_KEYPOINTS * 2)
 
-# ============================================================================
-# OPTIMIZED MODEL HYPERPARAMETERS FOR HANDS-ONLY DETECTION
-# ============================================================================
-# Transformer architecture - Optimized for hand gestures
-EMBED_DIM = 256  # Reduced from 512 (hands-only needs less capacity)
-NUM_HEADS = 4  # Reduced from 6
-FF_DIM = 512  # Reduced from 768
-DROPOUT_RATE = 0.3  # Reduced from 0.4 (less risk of overfitting with simpler data)
+# ---------------------------------------------------------------------------
+# Model hyperparameters
+# ---------------------------------------------------------------------------
+EMBED_DIM = 256
+NUM_HEADS = 4
+FF_DIM = 512
+DROPOUT_RATE = 0.3
 
-# Training parameters
 BATCH_SIZE = 64
 EPOCHS = 100
-LEARNING_RATE = 0.001  # Slightly increased for faster convergence
+LEARNING_RATE = 0.001
 VALIDATION_SPLIT = 0.20
 RANDOM_STATE = 42
-
-# Prediction threshold
 PREDICTION_THRESHOLD = 0.7
 
-# ============================================================================
-# VISUALIZATION SETTINGS
-# ============================================================================
-# Colors for MediaPipe landmarks (BGR format)
-FACE_COLOR = (80, 110, 10)
-FACE_CONNECTION_COLOR = (80, 256, 121)
-POSE_COLOR = (80, 22, 10)
-POSE_CONNECTION_COLOR = (80, 44, 121)
+# ---------------------------------------------------------------------------
+# Visualization (BGR)
+# ---------------------------------------------------------------------------
 LEFT_HAND_COLOR = (121, 22, 76)
 LEFT_HAND_CONNECTION_COLOR = (121, 44, 250)
 RIGHT_HAND_COLOR = (245, 117, 66)
 RIGHT_HAND_CONNECTION_COLOR = (245, 66, 230)
-
-# Drawing specifications
 LANDMARK_THICKNESS = 2
 LANDMARK_RADIUS = 4
 CONNECTION_THICKNESS = 2
 
 
-# ============================================================================
-# HELPER FUNCTIONS
-# ============================================================================
-def create_directories():
-    """Create all necessary directories if they don't exist."""
-    directories = [
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def create_directories(no_sequences=None):
+    n = no_sequences or NO_SEQUENCES
+    dirs = [
         DATA_DIR,
         RAW_DATA_DIR,
         PROCESSED_DATA_DIR,
@@ -139,42 +126,19 @@ def create_directories():
         LOGS_DIR,
         RESULTS_DIR,
     ]
-
-    for directory in directories:
-        os.makedirs(directory, exist_ok=True)
-
-    # Create action folders in processed data directory
+    for d in dirs:
+        os.makedirs(d, exist_ok=True)
     for action in ACTIONS:
-        action_dir = os.path.join(PROCESSED_DATA_DIR, action)
-        os.makedirs(action_dir, exist_ok=True)
-
-        # Create sequence folders
-        for sequence in range(NO_SEQUENCES):
-            sequence_dir = os.path.join(action_dir, str(sequence))
-            os.makedirs(sequence_dir, exist_ok=True)
-
-    print(f"✓ All directories created successfully")
-    print(f"  - Raw data: {RAW_DATA_DIR}")
-    print(f"  - Processed data: {PROCESSED_DATA_DIR}")
-    print(f"  - Models: {SAVED_MODELS_DIR}")
-    print(f"  - Logs: {LOGS_DIR}")
-    print(f"  - Results: {RESULTS_DIR}")
+        for seq in range(n):
+            os.makedirs(
+                os.path.join(PROCESSED_DATA_DIR, action, str(seq)), exist_ok=True
+            )
+    print(f"✓ Directories ready  |  extractor={EXTRACTOR_MODE}  |  sequences={n}")
 
 
 def get_label_map():
-    """Get mapping from action labels to numeric indices."""
-    return {label: num for num, label in enumerate(ACTIONS)}
+    return {label: idx for idx, label in enumerate(ACTIONS)}
 
 
 def get_num_classes():
-    """Get total number of action classes."""
     return len(ACTIONS)
-
-
-if __name__ == "__main__":
-    # Test configuration by creating directories
-    print("Creating project directory structure...")
-    create_directories()
-    print(f"\nTotal actions: {get_num_classes()}")
-    print(f"Actions: {ACTIONS}")
-    print(f"\n⚠️  NOTE: This config is optimized for HANDS-ONLY detection")
